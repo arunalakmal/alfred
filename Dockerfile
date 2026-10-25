@@ -3,7 +3,10 @@ FROM python:3.12-slim
 # The Claude Agent SDK ships the Claude Code CLI it drives; Node is not required.
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     ALFRED_HOST=0.0.0.0 ALFRED_PORT=8787 \
-    ALFRED_DATA_DIR=/data ALFRED_WORKSPACE=/workspace ALFRED_REPO_DIR=/app
+    ALFRED_DATA_DIR=/data ALFRED_WORKSPACE=/workspace ALFRED_REPO_DIR=/app \
+    CLAUDE_CONFIG_DIR=/data/claude
+# CLAUDE_CONFIG_DIR keeps Claude Code's session files on the data volume, so a thread can be
+# resumed after the container is recreated.
 
 WORKDIR /app
 COPY pyproject.toml ./

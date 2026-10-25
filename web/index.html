@@ -261,6 +261,7 @@ $("#composer").addEventListener("submit", async (e) => {
         if (ev.thread_id) { threadId = ev.thread_id; store.set("alfred.thread", threadId); showThread(); }
         if (ev.type === "route") trace(`Routed to ${ev.tier}: ${ev.reason}`);
         else if (ev.type === "delegate") trace(`Delegating to ${ev.agent} (${ev.provider})`);
+        else if (ev.type === "attempt") trace(`Attempt ${ev.attempt}: ${ev.reason}`);
         else if (ev.type === "text") {
           if (!reply || reply.agent !== (ev.agent || "alfred")) reply = speaker(ev.agent, ev.model);
           reply.body.textContent += (reply.body.textContent ? "\n" : "") + ev.text;

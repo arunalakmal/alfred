@@ -223,6 +223,9 @@ class Store:
         rows = self._rows("SELECT session_id FROM threads WHERE thread_id=?", (thread_id,))
         return rows[0]["session_id"] if rows else None
 
+    def clear_session(self, thread_id: str) -> None:
+        self._exec("DELETE FROM threads WHERE thread_id=?", (thread_id,))
+
     def set_session(self, thread_id: str, session_id: str) -> None:
         self._exec(
             "INSERT INTO threads (thread_id, session_id, updated_at) VALUES (?,?,?)"

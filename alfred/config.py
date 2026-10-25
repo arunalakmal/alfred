@@ -33,6 +33,7 @@ class Settings:
     # Manager behaviour and token guards
     default_manager_model: str = field(default_factory=lambda: os.getenv("ALFRED_MANAGER_MODEL", "sonnet"))
     max_budget_usd: float = field(default_factory=lambda: float(os.getenv("ALFRED_MAX_BUDGET_USD", "1.0")))
+    max_attempts: int = field(default_factory=lambda: int(os.getenv("ALFRED_MAX_ATTEMPTS", "2")))
     max_turns: int = field(default_factory=lambda: int(os.getenv("ALFRED_MAX_TURNS", "12")))
     subagent_depth: int = field(default_factory=lambda: int(os.getenv("ALFRED_SUBAGENT_DEPTH", "1")))
     max_concurrent_subagents: int = field(default_factory=lambda: int(os.getenv("ALFRED_MAX_CONCURRENT_SUBAGENTS", "4")))

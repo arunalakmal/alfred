@@ -310,3 +310,115 @@ async def test_manager_tags_text_with_speaker(store, monkeypatch, tmp_path):
                      ("researcher", "claude-haiku-5-5", "Found 3 sources."),
                      ("writer", "azure-gpt", "Draft ready."),
                      ("alfred", "claude-sonnet-5-5", "Done.")]
+
+
+# ---------------------------------------------------------------- attempt before declining
+@pytest.mark.parametrize("msg,tier", [
+    ("ask researcher what the latest Kubernetes release is", "sonnet"),
+    ("what is the weather in Colombo today", "sonnet"),
+    ("check my calendar for tomorrow", "sonnet"),
+    ("what does the local-helper think of this", "sonnet"),
+    ("hi alfred, how are you?", "local"),
+])
+def test_router_sends_tool_needs_to_agents(msg, tier):
+    assert route(msg, agents=["researcher", "local-helper"]).tier == tier
+
+
+@pytest.mark.parametrize("reply,escalate", [
+    ("ESCALATE", True), ("escalate.", True),
+    ("I don't have access to real-time data.", True), ("I’m unable to browse the web.", True),
+    ("As an AI, I cannot check that.", True),
+    ("Paris is the capital of France.", False), ("You can't go wrong with Python.", False),
+])
+def test_needs_escalation(reply, escalate):
+    from alfred.router import needs_escalation
+    assert needs_escalation(reply) is escalate
+
+
+async def test_cheap_tier_escalates_to_agent(store, monkeypatch):
+    from alfred.config import Settings
+    from alfred.manager import Alfred
+
+    class DecliningGateway(FakeGateway):
+        async def chat(self, model, *a, **k):
+            return GatewayResult(text="ESCALATE", model=model, input_tokens=10, output_tokens=1)
+
+    async def fake_agent(self, prompt, tier, thread_id, budget=None):
+        calls.append(tier)
+        yield {"type": "done", "result": "Kubernetes 1.36", "cost_usd": 0.01, "tokens": 5,
+               "thread_id": thread_id, "delegated": ["researcher"]}
+
+    calls = []
+    monkeypatch.setattr(Alfred, "_run_agent", fake_agent)
+    events = [e async for e in Alfred(store, DecliningGateway(), Settings()).run("hi there")]
+    assert calls == ["haiku"]                                        # direct tier skipped: it has no tools either
+    assert "escalating" in events[1]["reason"]
+    assert not any(e["type"] == "text" and e["text"] == "ESCALATE" for e in events)
+    assert store.usage_summary(1)["totals"]["calls"] == 1            # the declined local call is still recorded
+
+
+async def test_refusal_without_attempt_is_retried_once(store, monkeypatch):
+    from alfred.config import Settings
+    from alfred.manager import Alfred
+
+    replies = iter([("I don't have access to live data.", []), ("Kubernetes 1.36", ["researcher"])])
+
+    async def fake_agent(self, prompt, tier, thread_id, budget=None):
+        prompts.append(prompt)
+        result, delegated = next(replies)
+        yield {"type": "done", "result": result, "cost_usd": 0.01, "tokens": 5,
+               "thread_id": thread_id, "delegated": delegated}
+
+    prompts = []
+    monkeypatch.setattr(Alfred, "_run_agent", fake_agent)
+    events = [e async for e in Alfred(store, FakeGateway(), Settings()).run("/sonnet latest k8s release?")]
+    assert [e["type"] for e in events] == ["route", "attempt", "done"]
+    assert "researcher" in prompts[1] and "latest k8s release?" in prompts[1]
+    assert events[-1]["result"] == "Kubernetes 1.36"
+    assert events[-1]["cost_usd"] == pytest.approx(0.02) and events[-1]["attempts"] == 2
+    assert store.agent_events()[0]["action"] == "attempt"
+
+
+async def test_no_retry_after_real_attempts_or_at_limit(store, monkeypatch):
+    from alfred.config import Settings
+    from alfred.manager import Alfred
+
+    async def fake_agent(self, prompt, tier, thread_id, budget=None):
+        runs.append(prompt)
+        yield {"type": "done", "result": result, "cost_usd": 0.01, "tokens": 5,
+               "thread_id": thread_id, "delegated": delegated}
+
+    monkeypatch.setattr(Alfred, "_run_agent", fake_agent)
+    for result, delegated, settings in (
+            ("I can't access your bank.\nAttempts: researcher (no connector).", [], Settings()),
+            ("I can't access your bank.", ["researcher"], Settings()),
+            ("I can't access your bank.", [], Settings(max_attempts=1))):
+        runs = []
+        events = [e async for e in Alfred(store, FakeGateway(), settings).run("/sonnet my balance?")]
+        assert len(runs) == 1 and events[-1]["type"] == "done"
+
+
+async def test_failed_specialist_points_to_alternatives(store):
+    from alfred.tools import _alternatives
+    hint = _alternatives(store, "writer")
+    assert "researcher" in hint and "local-helper" in hint and "writer" not in hint
+
+
+async def test_missing_session_starts_fresh(store, monkeypatch, tmp_path):
+    import claude_agent_sdk as sdk
+    from alfred.config import Settings
+    from alfred.manager import Alfred
+
+    async def fake_query(prompt, options):
+        resumes.append(options.resume)
+        if options.resume:
+            raise RuntimeError("No conversation found with session ID: old")
+        yield sdk.ResultMessage("success", 1, 1, False, 1, "new", total_cost_usd=0.0, result="Here you go.")
+
+    resumes = []
+    store.set_session("t1", "old")
+    monkeypatch.setattr(sdk, "query", fake_query)
+    events = [e async for e in Alfred(store, FakeGateway(), Settings(workspace=tmp_path)).run("/sonnet hi", "t1")]
+    assert resumes == ["old", None]
+    assert "starting a fresh one" in events[1]["reason"] and events[-1]["result"] == "Here you go."
+    assert store.get_session("t1") == "new"

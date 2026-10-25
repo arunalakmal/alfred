@@ -3,6 +3,7 @@
 Runs one request end to end and yields progress events:
   route    -> which tier the router picked and why
   delegate -> a specialist was engaged (Claude sub-agent or gateway specialist)
+  attempt  -> Alfred declined without trying anyone, so it is sent back to try a specialist
   text     -> reply text, tagged with the agent and model that wrote it (alfred or a specialist)
   done     -> final result, cost and token totals
   error    -> something failed; the message says what
@@ -21,15 +22,19 @@ from .gateway import LOCAL_MODEL, Gateway, provider_of
 
 DIRECT_MODEL = __import__("os").getenv("ALFRED_DIRECT_MODEL", "claude-haiku")
 from .registry import claude_definitions, external_specialists
-from .router import route
+from .router import needs_escalation, route
 from .store import Store
 from .tools import MANAGER_TOOLS, build_server, current_route, current_session, current_thread
 
 ALFRED_PROMPT = """You are Alfred, a calm, precise personal assistant and the manager of a team of specialist agents.
 
 How you work:
-- Answer directly when you can do so well yourself. Delegate only when a specialist is better suited
-  or when the work is large enough that isolating it saves context.
+- Never decline before trying. Attempt in order: answer yourself if your own tools suffice, then the
+  best-matching specialist, then the next best, then propose_agent if no one on the team fits.
+  Say you can't only after those attempts fail, and end with one line, "Attempts:", naming who you
+  tried and why each failed.
+- Answer yourself when your tools suffice; delegate when a specialist is better suited or when the
+  work is large enough that isolating it saves context.
 - Claude specialists are invoked with the Agent tool (subagent_type = their name).
   Specialists on other providers are invoked with ask_specialist.
 - Run independent specialist tasks in parallel. Give each a self-contained brief: goal, inputs,
@@ -47,7 +52,16 @@ Skip this line for simple questions and small talk.
 # Small models invent an identity when asked, so tell them which model they are.
 LOCAL_PROMPT = ("You are Alfred, a concise personal assistant. Answer briefly and accurately. "
                 "You are running on the model '{model}'. If asked what model you are, say exactly that; "
-                "never claim to be any other model or company.")
+                "never claim to be any other model or company. If answering needs current information, the web, "
+                "files, tools or a specialist, reply with exactly ESCALATE and nothing else.")
+
+RETRY_PROMPT = ("You declined without trying anyone on your team. Original request: {request}\n"
+                "Try the best-matching specialist now ({candidates}), then the next if it fails. "
+                "Decline only after real attempts, ending with \"Attempts:\".")
+
+
+class Escalate(Exception):
+    """A cheap tier could not answer; hand the request to the agent loop."""
 
 
 class Alfred:
@@ -79,8 +93,9 @@ class Alfred:
     # ------------------------------------------------------------------ run
     async def run(self, message: str, thread_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
         thread_id = thread_id or uuid.uuid4().hex
+        names = [a["name"] for a in self.store.list_agents(status="active")]
         decision = route(message, self.settings.default_manager_model,
-                         local_available=self.settings.local_enabled)
+                         local_available=self.settings.local_enabled, agents=names)
         yield {"type": "route", "tier": decision.tier, "reason": decision.reason, "thread_id": thread_id}
 
         # Cheap paths first: local model, then one direct Haiku call. Each falls through on failure.
@@ -91,6 +106,10 @@ class Alfred:
                 async for ev in self._run_simple(decision.prompt, thread_id, tier, model):
                     yield ev
                 return
+            except Escalate:
+                yield {"type": "route", "tier": tier, "thread_id": thread_id,
+                       "reason": f"{model} could not answer; escalating to the haiku agent"}
+                break
             except Exception as exc:
                 nxt = "direct haiku" if tier == "local" else "the haiku agent"
                 yield {"type": "route", "tier": tier, "thread_id": thread_id,
@@ -98,8 +117,31 @@ class Alfred:
         if decision.tier in ("local", "direct"):
             decision = route("/haiku " + decision.prompt)
 
-        async for ev in self._run_agent(decision.prompt, decision.tier, thread_id):
-            yield ev
+        # Attempt loop: a run that declines without engaging any specialist is sent back once to try one.
+        s = self.settings
+        prompt, spent, tokens, tries = decision.prompt, 0.0, 0, max(s.max_attempts, 1)
+        for attempt in range(1, tries + 1):
+            final, failed = None, False
+            async for ev in self._run_agent(prompt, decision.tier, thread_id, budget=s.max_budget_usd - spent):
+                if ev["type"] == "done":
+                    final = ev
+                    continue
+                failed = failed or ev["type"] == "error"
+                yield ev
+            if final is None:
+                return
+            spent += final.get("cost_usd") or 0.0
+            tokens += final.get("tokens") or 0
+            result = final.get("result") or ""
+            if (failed or attempt == tries or final.get("delegated") or spent >= s.max_budget_usd
+                    or "Attempts:" in result or not needs_escalation(result)):
+                yield {**final, "cost_usd": spent, "tokens": tokens, "attempts": attempt}
+                return
+            reason = "declined without trying a specialist"
+            self.store.log_event("alfred", "attempt", "alfred",
+                                 {"thread_id": thread_id, "attempt": attempt + 1, "reason": reason})
+            yield {"type": "attempt", "attempt": attempt + 1, "reason": reason, "thread_id": thread_id}
+            prompt = RETRY_PROMPT.format(request=decision.prompt, candidates=", ".join(names) or "none")
 
     async def _run_simple(self, prompt: str, thread_id: str, tier: str, model: str
                           ) -> AsyncIterator[dict[str, Any]]:
@@ -108,16 +150,20 @@ class Alfred:
                                 provider=provider_of(model), model=res.model, route=tier,
                                 input_tokens=res.input_tokens, output_tokens=res.output_tokens,
                                 cache_read=res.cache_read, cost_usd=res.cost_usd)
+        if needs_escalation(res.text):
+            raise Escalate(res.text)
         yield {"type": "text", "text": res.text, "agent": "alfred", "model": res.model}
         yield {"type": "done", "result": res.text, "cost_usd": res.cost_usd, "thread_id": thread_id,
                "tokens": res.input_tokens + res.output_tokens}
 
-    async def _run_agent(self, prompt: str, tier: str, thread_id: str) -> AsyncIterator[dict[str, Any]]:
+    async def _run_agent(self, prompt: str, tier: str, thread_id: str, budget: float | None = None
+                         ) -> AsyncIterator[dict[str, Any]]:
         from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock,
                                       ToolResultBlock, ToolUseBlock, UserMessage, query)
 
         s = self.settings
         s.workspace.mkdir(parents=True, exist_ok=True)
+        resume = self.store.get_session(thread_id)
         options = ClaudeAgentOptions(
             system_prompt=self._system_prompt(),
             model=tier,
@@ -128,8 +174,8 @@ class Alfred:
             allowed_tools=self._allowed_tools(),
             permission_mode="dontAsk",
             max_turns=s.max_turns,
-            max_budget_usd=s.max_budget_usd,
-            resume=self.store.get_session(thread_id),
+            max_budget_usd=s.max_budget_usd if budget is None else budget,
+            resume=resume,
             cwd=str(s.workspace),
             env={
                 "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(s.subagent_depth),
@@ -140,6 +186,8 @@ class Alfred:
         ledger = RunLedger()
         delegations: dict[str, str] = {}   # Agent tool_use id -> specialist name
         gateway_calls: dict[str, str] = {}  # ask_specialist tool_use id -> specialist name
+        engaged: set[str] = set()           # every specialist engaged in this run
+        replied = False
         session_id: str | None = None
         tokens_thread = current_thread.set(thread_id)
         tokens_route = current_route.set(tier)
@@ -153,6 +201,7 @@ class Alfred:
                     current_session.set(sid)
 
                 if isinstance(msg, AssistantMessage):
+                    replied = True
                     agent = delegations.get(msg.parent_tool_use_id or "", "alfred") \
                         if msg.parent_tool_use_id else "alfred"
                     ledger.add_message(agent, msg.model, msg.usage, msg.message_id)
@@ -160,9 +209,11 @@ class Alfred:
                         if isinstance(block, ToolUseBlock) and block.name in ("Agent", "Task"):
                             name = block.input.get("subagent_type") or "general-purpose"
                             delegations[block.id] = name
+                            engaged.add(name)
                             yield {"type": "delegate", "agent": name, "provider": "anthropic"}
                         elif isinstance(block, ToolUseBlock) and block.name.endswith("__ask_specialist"):
                             gateway_calls[block.id] = block.input.get("agent") or "specialist"
+                            engaged.add(gateway_calls[block.id])
                             yield {"type": "delegate", "agent": gateway_calls[block.id], "provider": "gateway"}
                         elif isinstance(block, TextBlock):
                             yield {"type": "text", "text": block.text, "agent": agent, "model": msg.model}
@@ -191,8 +242,16 @@ class Alfred:
                         yield {"type": "error", "message": f"Run ended: {msg.subtype}", "thread_id": thread_id}
                     yield {"type": "done", "result": msg.result, "cost_usd": msg.total_cost_usd,
                            "tokens": tokens, "thread_id": thread_id, "session_id": msg.session_id,
-                           "agents": sorted({r["agent"] for r in rows})}
+                           "agents": sorted({r["agent"] for r in rows}), "delegated": sorted(engaged)}
         except Exception as exc:
+            if resume and "No conversation found" in str(exc) and not replied:
+                # Claude Code no longer has this thread's session (e.g. the container was recreated).
+                self.store.clear_session(thread_id)
+                yield {"type": "route", "tier": tier, "thread_id": thread_id,
+                       "reason": "previous conversation not found; starting a fresh one"}
+                async for ev in self._run_agent(prompt, tier, thread_id, budget):
+                    yield ev
+                return
             yield {"type": "error", "message": f"{type(exc).__name__}: {exc}", "thread_id": thread_id}
         finally:
             current_thread.reset(tokens_thread)

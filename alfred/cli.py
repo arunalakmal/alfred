@@ -52,6 +52,8 @@ def main() -> None:
                 print(f"[{ev['tier']}] {ev['reason']}", file=sys.stderr)
             elif ev["type"] == "delegate":
                 print(f"  -> {ev['agent']} ({ev['provider']})", file=sys.stderr)
+            elif ev["type"] == "attempt":
+                print(f"[attempt {ev['attempt']}] {ev['reason']}", file=sys.stderr)
             elif ev["type"] == "text":
                 who = ev.get("agent") or "alfred"
                 print(ev["text"] if who == "alfred" else f"[{who}] {ev['text']}")

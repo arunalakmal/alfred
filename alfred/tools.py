@@ -40,6 +40,17 @@ def _text(payload: Any, error: bool = False) -> dict[str, Any]:
     return out
 
 
+def _alternatives(store: Store, exclude: str) -> str:
+    """Point a failed delegation at the rest of the team, so the caller tries again instead of giving up."""
+    others = [a for a in store.list_agents(status="active") if a["name"] != exclude]
+    claude = [a["name"] for a in others if a["provider"] == "anthropic"]
+    gateway = [a["name"] for a in others if a["provider"] != "anthropic"]
+    parts = ([f"Agent tool: {', '.join(claude)}"] if claude else []) + \
+            ([f"ask_specialist: {', '.join(gateway)}"] if gateway else [])
+    return " Try another specialist (" + "; ".join(parts) + ") or answer yourself." if parts else \
+        " Answer yourself or use propose_agent."
+
+
 def build_server(store: Store, gateway: Gateway):
     @tool("list_agents", "List Alfred's specialist agents with provider, model and status.", {})
     async def list_agents(_: dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +64,8 @@ def build_server(store: Store, gateway: Gateway):
     async def ask_specialist(args: dict[str, Any]) -> dict[str, Any]:
         agent = store.get_agent(args["agent"])
         if not agent or agent["status"] != "active":
-            return _text(f"No active specialist named '{args['agent']}'.", error=True)
+            return _text(f"No active specialist named '{args['agent']}'." + _alternatives(store, args["agent"]),
+                         error=True)
         if agent["provider"] == "anthropic":
             return _text(f"'{agent['name']}' is a Claude specialist; use the Agent tool with "
                          f"subagent_type='{agent['name']}'.", error=True)
@@ -63,7 +75,8 @@ def build_server(store: Store, gateway: Gateway):
         try:
             res = await gateway.chat(agent["model"], agent["prompt"], user)
         except Exception as exc:
-            return _text(f"Specialist '{agent['name']}' failed via gateway: {type(exc).__name__}: {exc}", error=True)
+            return _text(f"Specialist '{agent['name']}' failed via gateway: {type(exc).__name__}: {exc}."
+                         + _alternatives(store, agent["name"]), error=True)
         store.record_usage(session_id=current_session.get(), thread_id=current_thread.get(), agent=agent["name"],
                            provider=agent["provider"] or provider_of(agent["model"]), model=res.model,
                            route=current_route.get(), input_tokens=res.input_tokens,
