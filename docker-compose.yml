@@ -3,6 +3,7 @@
 #   docker compose up -d --build
 #   docker compose exec ollama ollama pull llama3.2:3b
 # Dashboard: http://localhost:8787
+# LiteLLM UI: http://localhost:4000/ui  (user "admin", password = LITELLM_MASTER_KEY, which must start with sk-)
 #
 # Remote access (phone / other machines): `docker compose --profile remote up -d`
 # adds a Tailscale sidecar. See docs/REMOTE.md.
@@ -27,12 +28,33 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     env_file: .env
+    environment:
+      # The admin UI (login, keys, spend logs) needs a database.
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
     volumes:
       - ./config/litellm.yaml:/app/config.yaml:ro
     ports:
       - "127.0.0.1:4000:4000"
-    depends_on: [ollama]
+    depends_on:
+      ollama: { condition: service_started }
+      litellm-db: { condition: service_healthy }
     restart: unless-stopped
+
+  litellm-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm}
+      POSTGRES_DB: litellm
+    volumes:
+      - litellm-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped        # no published port: reachable only from the litellm container
 
   ollama:
     image: ollama/ollama:latest
@@ -59,5 +81,6 @@ services:
 
 volumes:
   alfred-data:
+  litellm-db:
   ollama-models:
   tailscale-state:
