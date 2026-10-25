@@ -1,0 +1,35 @@
+# LiteLLM gateway: one OpenAI-compatible endpoint for every non-Claude provider.
+# Add a provider by adding a model_name here; specialists refer to these names.
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # Azure OpenAI - set AZURE_API_KEY, AZURE_API_BASE, AZURE_API_VERSION in .env and
+  # replace "your-deployment" with your Azure deployment name.
+  - model_name: azure-gpt
+    litellm_params:
+      model: azure/your-deployment
+      api_base: os.environ/AZURE_API_BASE
+      api_key: os.environ/AZURE_API_KEY
+      api_version: os.environ/AZURE_API_VERSION
+
+  # Local models via Ollama (the compose service). Pull the model first:
+  #   docker compose exec ollama ollama pull llama3.2:3b
+  - model_name: ollama-local
+    litellm_params:
+      model: ollama_chat/llama3.2:3b
+      api_base: http://ollama:11434
+
+  # Claude Haiku for the "direct" tier: one plain call for small talk, no agent loop.
+  # The manager and Claude specialists use the Agent SDK directly.
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  drop_params: true          # ignore params a provider doesn't support instead of failing
+  num_retries: 2
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

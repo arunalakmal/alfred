@@ -1,0 +1,13 @@
+{
+  "name": "Alfred",
+  "short_name": "Alfred",
+  "description": "Personal multi-agent assistant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111214",
+  "theme_color": "#111214",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "alfred": {
+      "command": "python",
+      "args": ["-m", "alfred.mcp_server"],
+      "env": {
+        "ALFRED_URL": "${ALFRED_URL:-http://localhost:8787}",
+        "ALFRED_API_KEY": "${ALFRED_API_KEY:-}"
+      }
+    }
+  }
+}

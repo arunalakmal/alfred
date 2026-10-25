@@ -1,0 +1,63 @@
+# Alfred v1 stack: manager API + dashboard, LiteLLM gateway, local Ollama.
+#   cp .env.example .env   # fill in keys
+#   docker compose up -d --build
+#   docker compose exec ollama ollama pull llama3.2:3b
+# Dashboard: http://localhost:8787
+#
+# Remote access (phone / other machines): `docker compose --profile remote up -d`
+# adds a Tailscale sidecar. See docs/REMOTE.md.
+
+services:
+  alfred:
+    build: .
+    env_file: .env
+    environment:
+      ALFRED_GATEWAY_URL: http://litellm:4000
+    ports:
+      - "127.0.0.1:8787:8787"     # localhost only; remote access goes through Tailscale
+    volumes:
+      - alfred-data:/data
+      - ./workspace:/workspace
+      - ./config:/app/config:ro
+      - ./.claude:/app/.claude     # lets "Export to Claude Code" write agent files into the repo
+    depends_on: [litellm]
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file: .env
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on: [ollama]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    # Uncomment on a machine with an NVIDIA GPU:
+    # deploy: { resources: { reservations: { devices: [{ capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
+  tailscale:
+    profiles: ["remote"]
+    image: tailscale/tailscale:latest
+    hostname: alfred
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./config/tailscale-serve.json:/config/serve.json:ro
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    restart: unless-stopped
+
+volumes:
+  alfred-data:
+  ollama-models:
+  tailscale-state:

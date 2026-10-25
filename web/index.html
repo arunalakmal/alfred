@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111214">
+<title>Alfred</title>
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<script src="/static/vendor/chart.umd.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --surface-2: #ececea; --line: #dcdbd6;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #77766f;
+  --accent: #2a78d6; --accent-ink: #ffffff;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --good: #0f7b3f; --warn: #a96200; --bad: #c0302f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111214; --surface-1: #1a1a19; --surface-2: #252523; --line: #33332f;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --accent: #3987e5; --accent-ink: #ffffff;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --good: #4cc27f; --warn: #e3a33a; --bad: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111214; --surface-1: #1a1a19; --surface-2: #252523; --line: #33332f;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --accent: #3987e5; --accent-ink: #ffffff;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --good: #4cc27f; --warn: #e3a33a; --bad: #e66767;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: var(--surface-0); border-bottom: 1px solid var(--line);
+  padding: max(12px, env(safe-area-inset-top)) 16px 0; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+.dot.ok { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 20%, transparent); }
+.brand .spacer { flex: 1; }
+nav { display: flex; gap: 4px; overflow-x: auto; margin-top: 10px; }
+nav button { background: none; border: 0; color: var(--text-secondary); padding: 8px 12px; font: inherit;
+  border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+nav button[aria-selected="true"] { color: var(--text-primary); border-color: var(--accent); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+section[hidden] { display: none; }
+.card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 14px; margin: 0 0 12px; color: var(--text-secondary); font-weight: 600; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.stat .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .l { color: var(--text-secondary); font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--text-secondary); font-weight: 600; }
+td.n, th.n { text-align: right; }
+.scroll { overflow-x: auto; }
+#agentsTable td:first-child { min-width: 200px; }
+#eventsTable td:last-child { min-width: 160px; }
+td.n { white-space: nowrap; }
+.chart { position: relative; height: 260px; }
+input, textarea, select { width: 100%; font: inherit; color: var(--text-primary); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+textarea { resize: vertical; }
+label { display: block; font-size: 13px; color: var(--text-secondary); margin: 10px 0 4px; }
+.btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 9px 14px;
+  font: inherit; font-weight: 600; cursor: pointer; }
+.btn.ghost { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--line); }
+.btn.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2);
+  border: 1px solid var(--line); color: var(--text-secondary); }
+.pill.active { color: var(--good); } .pill.proposed { color: var(--warn); } .pill.disabled { color: var(--text-muted); }
+.muted { color: var(--text-muted); font-size: 13px; }
+/* chat */
+#chat { display: flex; flex-direction: column; height: calc(100dvh - 130px); }
+#log { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+.msg { max-width: 85%; padding: 10px 12px; border-radius: 12px; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+.msg.me { margin-left: auto; background: var(--accent); color: var(--accent-ink); }
+.msg.al { background: var(--surface-1); border: 1px solid var(--line); }
+.msg.spec { margin-left: 16px; border-left: 3px solid var(--accent); }
+.msg .who { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; white-space: normal; }
+.trace { font-size: 12px; color: var(--text-muted); margin: 2px 0 2px 4px; }
+#composer { display: flex; gap: 8px; padding: 8px 0 max(8px, env(safe-area-inset-bottom)); }
+#composer textarea { min-height: 44px; max-height: 160px; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--surface-1); color: var(--text-primary);
+  width: min(560px, calc(100vw - 32px)); padding: 16px; }
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="dot" id="statusDot" title="API status"></span>
+    <h1>Alfred</h1>
+    <span class="spacer"></span>
+    <button class="btn ghost small" id="keyBtn">API key</button>
+  </div>
+  <nav role="tablist">
+    <button role="tab" data-tab="chat" aria-selected="true">Chat</button>
+    <button role="tab" data-tab="usage">Usage</button>
+    <button role="tab" data-tab="agents">Agents</button>
+    <button role="tab" data-tab="providers">Providers</button>
+    <button role="tab" data-tab="activity">Activity</button>
+  </nav>
+</header>
+
+<main>
+  <!-- CHAT -->
+  <section id="tab-chat">
+    <div id="chat">
+      <div id="log"><p class="muted">Good evening. Ask me anything, or prefix with /local, /direct, /haiku, /sonnet or /opus to choose the tier.</p></div>
+      <form id="composer">
+        <textarea id="input" rows="1" placeholder="Message Alfred" aria-label="Message"></textarea>
+        <button class="btn" type="submit">Send</button>
+      </form>
+      <div class="row"><span class="muted" id="threadInfo">New conversation</span>
+        <button class="btn ghost small" id="newThread" type="button">New thread</button></div>
+    </div>
+  </section>
+
+  <!-- USAGE -->
+  <section id="tab-usage" hidden>
+    <div class="row" style="margin-bottom:12px">
+      <label for="days" style="margin:0">Range</label>
+      <select id="days" style="width:auto"><option value="1">24 hours</option><option value="7">7 days</option>
+        <option value="30" selected>30 days</option><option value="90">90 days</option></select>
+    </div>
+    <div class="grid" id="stats"></div>
+    <div class="card"><h2>Tokens per day by provider</h2>
+      <div class="legend" id="dailyLegend"></div><div class="chart"><canvas id="dailyChart"></canvas></div></div>
+    <div class="card"><h2>Cost by agent (USD)</h2><div class="chart" id="agentChartBox"><canvas id="agentChart"></canvas></div></div>
+    <div class="card scroll"><h2>By agent</h2><table id="byAgent"></table></div>
+    <div class="card scroll"><h2>By model</h2><table id="byModel"></table></div>
+    <div class="card scroll"><h2>Router decisions (manager tier per run)</h2><table id="routes"></table></div>
+  </section>
+
+  <!-- AGENTS -->
+  <section id="tab-agents" hidden>
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn" id="addAgent">Add agent</button>
+      <button class="btn ghost" id="exportAgents">Export to Claude Code</button>
+      <span class="muted" id="exportInfo"></span>
+    </div>
+    <div class="card scroll"><table id="agentsTable"></table></div>
+    <div class="card scroll"><h2>Change history</h2><table id="eventsTable"></table></div>
+  </section>
+
+  <!-- PROVIDERS -->
+  <section id="tab-providers" hidden>
+    <div class="card"><h2>Gateway</h2><div id="gatewayInfo" class="muted">Loading</div></div>
+    <div class="card scroll"><h2>Providers</h2><table id="providersTable"></table></div>
+    <div class="card scroll"><h2>Gateway models</h2><table id="modelsTable"></table></div>
+  </section>
+
+  <!-- ACTIVITY -->
+  <section id="tab-activity" hidden>
+    <div class="card scroll"><h2>Agent message bus</h2><table id="busTable"></table></div>
+  </section>
+</main>
+
+<dialog id="agentDialog">
+  <form id="agentForm" method="dialog">
+    <h2 id="agentDialogTitle" style="margin-top:0">Agent</h2>
+    <label for="f-name">Name</label><input id="f-name" required pattern="[a-z][a-z0-9-]{1,39}">
+    <label for="f-description">When to use (description)</label><textarea id="f-description" rows="2" required></textarea>
+    <div class="row" style="flex-wrap:nowrap">
+      <div style="flex:1"><label for="f-provider">Provider</label>
+        <select id="f-provider"><option>anthropic</option><option>azure</option><option>ollama</option></select></div>
+      <div style="flex:1"><label for="f-model">Model</label><input id="f-model" required placeholder="haiku / azure-gpt / ollama-local"></div>
+      <div style="flex:1"><label for="f-status">Status</label>
+        <select id="f-status"><option>active</option><option>proposed</option><option>disabled</option></select></div>
+    </div>
+    <label for="f-tools">Tools (Claude agents, comma separated)</label><input id="f-tools" placeholder="Read, Grep, WebSearch">
+    <label for="f-prompt">System prompt</label><textarea id="f-prompt" rows="6" required></textarea>
+    <p class="muted" id="agentError" role="alert"></p>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn" id="saveAgent" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+let apiKey = store.get("alfred.key") || "";
+let threadId = store.get("alfred.thread") || null;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (n) => (n ?? 0).toLocaleString();
+const usd = (n) => "$" + (n ?? 0).toFixed(4);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const PROVIDER_ORDER = ["anthropic", "azure", "ollama"];  // fixed order -> fixed color
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey } : {}) };
+  const r = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  if (r.status === 401) { $("#keyBtn").click(); throw new Error("API key required"); }
+  if (!r.ok && r.status !== 204) throw new Error((await r.text()) || r.statusText);
+  return r.status === 204 ? null : r.json();
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + b.dataset.tab));
+  ({ usage: loadUsage, agents: loadAgents, providers: loadProviders, activity: loadBus })[b.dataset.tab]?.();
+}));
+$("#keyBtn").addEventListener("click", () => {
+  const k = prompt("Alfred API key (stored on this device only)", apiKey);
+  if (k !== null) { apiKey = k.trim(); store.set("alfred.key", apiKey); }
+});
+
+/* ---------- chat ---------- */
+function bubble(cls, text) { const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = text;
+  $("#log").appendChild(d); $("#log").scrollTop = 1e9; return d; }
+// A reply bubble labelled with who wrote it; specialists are indented under Alfred.
+function speaker(agent, model) {
+  agent = agent || "alfred";
+  const d = bubble(agent === "alfred" ? "al" : "al spec", "");
+  const who = document.createElement("span"); who.className = "who";
+  who.textContent = (agent === "alfred" ? "Alfred" : agent) + (model ? " · " + model : "");
+  const body = document.createElement("span"); d.append(who, body);
+  return { agent, body };
+}
+function trace(text) { const d = document.createElement("div"); d.className = "trace"; d.textContent = text;
+  $("#log").appendChild(d); $("#log").scrollTop = 1e9; }
+function showThread() { $("#threadInfo").textContent = threadId ? "Thread " + threadId.slice(0, 8) : "New conversation"; }
+showThread();
+$("#newThread").addEventListener("click", () => { threadId = null; store.set("alfred.thread", ""); showThread(); $("#log").innerHTML = ""; });
+$("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } });
+
+$("#composer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("#input").value.trim(); if (!text) return;
+  $("#input").value = ""; bubble("me", text);
+  let reply = null;
+  try {
+    const r = await fetch("/api/chat", { method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey } : {}) },
+      body: JSON.stringify({ message: text, thread_id: threadId }) });
+    if (!r.ok) throw new Error(r.status === 401 ? "API key required" : await r.text());
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n"); buf = parts.pop();
+      for (const p of parts) {
+        if (!p.startsWith("data: ")) continue;
+        const ev = JSON.parse(p.slice(6));
+        if (ev.thread_id) { threadId = ev.thread_id; store.set("alfred.thread", threadId); showThread(); }
+        if (ev.type === "route") trace(`Routed to ${ev.tier}: ${ev.reason}`);
+        else if (ev.type === "delegate") trace(`Delegating to ${ev.agent} (${ev.provider})`);
+        else if (ev.type === "text") {
+          if (!reply || reply.agent !== (ev.agent || "alfred")) reply = speaker(ev.agent, ev.model);
+          reply.body.textContent += (reply.body.textContent ? "\n" : "") + ev.text;
+        }
+        else if (ev.type === "error") trace("Error: " + ev.message);
+        else if (ev.type === "done") {
+          if (!reply && ev.result) speaker("alfred").body.textContent = ev.result;
+          trace(`${fmt(ev.tokens)} tokens · ${usd(ev.cost_usd)}${ev.agents?.length ? " · " + ev.agents.join(", ") : ""}`);
+        }
+      }
+    }
+  } catch (err) { trace("Error: " + err.message); }
+});
+
+/* ---------- usage ---------- */
+let dailyChart, agentChart;
+function table(el, cols, rows) {
+  el.innerHTML = "<thead><tr>" + cols.map((c) => `<th class="${c.n ? "n" : ""}">${c.h}</th>`).join("") + "</tr></thead><tbody>" +
+    (rows.length ? rows.map((r) => "<tr>" + cols.map((c) => `<td class="${c.n ? "n" : ""}">${c.f ? c.f(r) : esc(r[c.k])}</td>`).join("") + "</tr>").join("")
+      : `<tr><td colspan="${cols.length}" class="muted">No data yet</td></tr>`) + "</tbody>";
+}
+const usageCols = [ { h: "Name", k: "key" }, { h: "Calls", n: 1, f: (r) => fmt(r.calls) },
+  { h: "Input", n: 1, f: (r) => fmt(r.input) }, { h: "Output", n: 1, f: (r) => fmt(r.output) },
+  { h: "Cache read", n: 1, f: (r) => fmt(r.cache_read) }, { h: "Cost", n: 1, f: (r) => usd(r.cost) } ];
+
+async function loadUsage() {
+  const s = await api("/api/usage?days=" + $("#days").value);
+  const t = s.totals;
+  $("#stats").innerHTML = [
+    ["Cost", usd(t.cost)], ["Model calls", fmt(t.calls)], ["Input tokens", fmt(t.input)],
+    ["Output tokens", fmt(t.output)], ["Cache hit rate", Math.round(t.cache_hit_rate * 100) + "%"],
+  ].map(([l, v]) => `<div class="card stat"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("");
+  table($("#byAgent"), usageCols, s.by_agent);
+  table($("#byModel"), usageCols, s.by_model);
+  table($("#routes"), [{ h: "Tier", k: "key" }, { h: "Runs", n: 1, f: (r) => fmt(r.sessions) }], s.routes);
+
+  const days = [...new Set(s.daily.map((d) => d.day))];
+  const providers = [...new Set([...PROVIDER_ORDER, ...s.daily.map((d) => d.provider)])]
+    .filter((p) => s.daily.some((d) => d.provider === p));
+  const color = (p) => css("--series-" + (PROVIDER_ORDER.indexOf(p) + 1)) || css("--text-muted");
+  $("#dailyLegend").innerHTML = providers.map((p) => `<span><i style="background:${color(p)}"></i>${esc(p)}</span>`).join("");
+  const grid = css("--line"), ink = css("--text-secondary"), surface = css("--surface-1");
+  const axes = { x: { stacked: true, grid: { display: false }, ticks: { color: ink } },
+                 y: { stacked: true, grid: { color: grid }, ticks: { color: ink }, border: { display: false } } };
+  dailyChart?.destroy();
+  dailyChart = new Chart($("#dailyChart"), { type: "bar",
+    data: { labels: days, datasets: providers.map((p) => ({ label: p, backgroundColor: color(p),
+      borderColor: surface, borderWidth: { top: 2 }, borderRadius: 4, maxBarThickness: 28,
+      data: days.map((d) => s.daily.find((x) => x.day === d && x.provider === p)?.tokens || 0) })) },
+    options: { maintainAspectRatio: false, scales: axes, plugins: { legend: { display: false },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: (c) => `${c.dataset.label}: ${fmt(c.parsed.y)} tokens` } } } } });
+
+  const agents = s.by_agent.filter((a) => a.cost > 0).slice(0, 12);
+  $("#agentChartBox").style.height = Math.max(120, agents.length * 34 + 40) + "px";
+  agentChart?.destroy();
+  agentChart = new Chart($("#agentChart"), { type: "bar",
+    data: { labels: agents.map((a) => a.key), datasets: [{ label: "Cost", data: agents.map((a) => a.cost),
+      backgroundColor: css("--series-1"), borderRadius: 4, maxBarThickness: 22 }] },
+    options: { indexAxis: "y", maintainAspectRatio: false,
+      scales: { x: { grid: { color: grid }, ticks: { color: ink, callback: (v) => "$" + v }, border: { display: false } },
+                y: { grid: { display: false }, ticks: { color: ink } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => usd(c.parsed.x) } } } } });
+}
+$("#days").addEventListener("change", loadUsage);
+
+/* ---------- agents ---------- */
+async function loadAgents() {
+  const [agents, events] = await Promise.all([api("/api/agents"), api("/api/agents/events?limit=50")]);
+  table($("#agentsTable"), [
+    { h: "Agent", f: (a) => `<strong>${esc(a.name)}</strong><br><span class="muted">${esc(a.description)}</span>` },
+    { h: "Provider", f: (a) => esc(a.provider) }, { h: "Model", f: (a) => esc(a.model) },
+    { h: "Status", f: (a) => `<span class="pill ${a.status}">${a.status}</span>` },
+    { h: "Version", n: 1, f: (a) => "v" + a.version },
+    { h: "", f: (a) => `<div class="row" style="justify-content:flex-end">
+        ${a.status === "proposed" ? `<button class="btn small" data-approve="${esc(a.name)}">Approve</button>` : ""}
+        <button class="btn ghost small" data-edit="${esc(a.name)}">Edit</button>
+        <button class="btn ghost small" data-del="${esc(a.name)}">Delete</button></div>` },
+  ], agents);
+  table($("#eventsTable"), [
+    { h: "When", f: (e) => new Date(e.ts * 1000).toLocaleString() }, { h: "Agent", k: "agent" },
+    { h: "Action", k: "action" }, { h: "By", k: "actor" },
+    { h: "Detail", f: (e) => `<span class="muted">${esc(Object.keys(e.detail).join(", "))}</span>` },
+  ], events);
+  window._agents = Object.fromEntries(agents.map((a) => [a.name, a]));
+}
+$("#agentsTable").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.approve) await api(`/api/agents/${b.dataset.approve}/approve`, { method: "POST" });
+  if (b.dataset.del && confirm(`Delete ${b.dataset.del}?`)) await api(`/api/agents/${b.dataset.del}`, { method: "DELETE" });
+  if (b.dataset.edit) return openAgent(window._agents[b.dataset.edit]);
+  loadAgents();
+});
+let editing = null;
+function openAgent(a) {
+  editing = a?.name || null;
+  $("#agentDialogTitle").textContent = a ? "Edit " + a.name : "New agent";
+  $("#f-name").value = a?.name || ""; $("#f-name").disabled = !!a;
+  for (const k of ["description", "provider", "model", "status", "prompt"]) $("#f-" + k).value = a?.[k] || (k === "provider" ? "anthropic" : k === "status" ? "active" : "");
+  $("#f-tools").value = (a?.tools || []).join(", "); $("#agentError").textContent = "";
+  $("#agentDialog").showModal();
+}
+$("#addAgent").addEventListener("click", () => openAgent(null));
+$("#agentForm").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  const body = { description: $("#f-description").value, provider: $("#f-provider").value, model: $("#f-model").value,
+    status: $("#f-status").value, prompt: $("#f-prompt").value,
+    tools: $("#f-tools").value.split(",").map((s) => s.trim()).filter(Boolean) };
+  try {
+    if (editing) await api("/api/agents/" + editing, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/api/agents", { method: "POST", body: JSON.stringify({ name: $("#f-name").value, ...body }) });
+    $("#agentDialog").close(); loadAgents();
+  } catch (err) { $("#agentError").textContent = err.message; }
+});
+$("#exportAgents").addEventListener("click", async () => {
+  const r = await api("/api/agents/export", { method: "POST" });
+  $("#exportInfo").textContent = `Wrote ${r.written.length} file(s) to .claude/agents`;
+});
+
+/* ---------- providers ---------- */
+async function loadProviders() {
+  const p = await api("/api/providers");
+  $("#gatewayInfo").innerHTML = `${esc(p.gateway.url)} · ${p.gateway.reachable ? '<span style="color:var(--good)">● reachable</span>'
+    : '<span style="color:var(--bad)">● not reachable</span> <span class="muted">(start it with docker compose up)</span>'}`;
+  table($("#providersTable"), [
+    { h: "Provider", f: (r) => `<strong>${esc(r.label)}</strong>` },
+    { h: "Configured", f: (r) => r.configured ? '<span style="color:var(--good)">✓ yes</span>' : '<span class="muted">✕ no</span>' },
+    { h: "Agents", f: (r) => esc(r.agents.join(", ") || "—") },
+    { h: "Tokens incl. cache (30d)", n: 1, f: (r) => fmt(r.usage_30d ? r.usage_30d.input + r.usage_30d.output + r.usage_30d.cache_read + r.usage_30d.cache_write : 0) },
+    { h: "Cost (30d)", n: 1, f: (r) => usd(r.usage_30d?.cost) },
+  ], p.providers);
+  table($("#modelsTable"), [{ h: "Model name", k: "name" }, { h: "Routes to", k: "target" }, { h: "Provider", k: "provider" }], p.gateway_models);
+}
+
+/* ---------- activity ---------- */
+async function loadBus() {
+  table($("#busTable"), [
+    { h: "When", f: (m) => new Date(m.ts * 1000).toLocaleString() }, { h: "From", k: "sender" }, { h: "To", k: "recipient" },
+    { h: "Message", f: (m) => esc(m.body.length > 240 ? m.body.slice(0, 240) + "…" : m.body) },
+    { h: "Read", f: (m) => (m.read ? "✓" : "—") },
+  ], await api("/api/messages"));
+}
+
+/* ---------- status + PWA ---------- */
+fetch("/api/health").then((r) => r.ok && $("#statusDot").classList.add("ok")).catch(() => {});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+</script>
+</body>
+</html>
